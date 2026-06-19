@@ -5,7 +5,7 @@
 [![Database](https://img.shields.io/badge/SQLite-Sqflite-orange?logo=sqlite&style=for-the-badge)](https://pub.dev/packages/sqflite)
 [![Platform Support](https://img.shields.io/badge/Platform-Android-darkgreen?logo=android&style=for-the-badge)](#)
 
-**Hora** (meaning *Hour* or *Time*) is an elegant, high-reliability clinical helper and countdown timer app designed for healthcare professionals. From tracking patient vitals to monitoring timed clinical procedures (such as IV drip rates and nebulizer therapies), Hora delivers essential safety protections with active background execution and persistent system-level alerts.
+**Hora** (meaning *Hour* or *Time*) is an elegant, high-reliability clinical helper and countdown timer app designed for healthcare professionals. From tracking patient vitals to monitoring timed clinical procedures (such as IV drip rates and nebulizer therapies), Hora delivers essential safety protections with active background execution and persistent system-level alerts. 
 
 ![Hora App Mockup](assets/images/hora_mockup.png)
 
