@@ -9,9 +9,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:system_alert_window/system_alert_window.dart';
 import '../../core/app_themes.dart';
-import '../../core/db_helper.dart';
 import '../../models/patient_model.dart';
 import '../../widgets/glass_container.dart';
+import '../clinical/clinical_service.dart';
+import '../../core/settings_provider.dart';
+import 'timer_provider.dart';
 
 class TimerScreen extends StatefulWidget {
   const TimerScreen({super.key});
@@ -21,12 +23,6 @@ class TimerScreen extends StatefulWidget {
 }
 
 class _TimerScreenState extends State<TimerScreen> {
-  int _secondsRemaining = 0;
-  Timer? _timer;
-  bool _isRunning = false;
-  int _initialDuration = 0;
-  String _selectedSound = 'Clinical Beep';
-  String _alertMode = 'Both'; // 'Sound', 'Vibration', 'Both'
   final AudioPlayer _audioPlayer = AudioPlayer();
   int _intervalSeconds = 0; // 0 means no interval alert
   StreamSubscription? _serviceSubscription;
@@ -36,24 +32,41 @@ class _TimerScreenState extends State<TimerScreen> {
     super.initState();
     _checkPermissions();
     _listenToBackgroundService();
+
+    // Load custom sound into list if exists in settings
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final settings = Provider.of<SettingsProvider>(context, listen: false);
+      if (settings.selectedSound.startsWith('/') && !_medicalSounds.contains(settings.selectedSound)) {
+        setState(() {
+          _medicalSounds.insert(0, settings.selectedSound);
+        });
+      }
+    });
   }
 
   Future<void> _checkPermissions() async {
-    await SystemAlertWindow.requestPermissions(prefMode: SystemWindowPrefMode.OVERLAY);
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    if (settings.enableOverlayAlerts) {
+      try {
+        bool? hasPermission = await SystemAlertWindow.checkPermissions(prefMode: SystemWindowPrefMode.OVERLAY);
+        if (hasPermission != true) {
+          await SystemAlertWindow.requestPermissions(prefMode: SystemWindowPrefMode.OVERLAY);
+        }
+      } catch (e) {
+        // Suppress permission check exceptions on restricted environments
+      }
+    }
   }
 
   void _listenToBackgroundService() {
     _serviceSubscription = FlutterBackgroundService().on('update').listen((event) {
       if (event != null && mounted) {
-        setState(() {
-          _secondsRemaining = event['secondsRemaining'];
-          _isRunning = event['isRunning'];
-          
-          if (_secondsRemaining == 0 && _isRunning == false) {
-            _showCompletionDialog();
-            _isRunning = false;
-          }
-        });
+        final secondsRemaining = event['secondsRemaining'] ?? 0;
+        final isRunning = event['isRunning'] ?? false;
+        
+        if (secondsRemaining == 0 && isRunning == false) {
+          _showCompletionDialog();
+        }
       }
     });
   }
@@ -73,38 +86,36 @@ class _TimerScreenState extends State<TimerScreen> {
   final _bpController = TextEditingController();
 
   void _startTimer() {
-    if (_secondsRemaining == 0) return;
+    final timerProvider = Provider.of<TimerProvider>(context, listen: false);
+    if (timerProvider.secondsRemaining == 0) return;
     
-    // Only show form if not already running to prevent double-prompts
-    if (!_isRunning) {
+    // Only show form if not already running or paused to prevent double-prompts
+    if (!timerProvider.isRunning && !timerProvider.isPaused) {
       _showVitalsForm();
+    } else if (timerProvider.isPaused) {
+      timerProvider.resumeTimer();
     } else {
       _resumeTimer();
     }
   }
 
   void _resumeTimer() async {
-    setState(() {
-      _isRunning = true;
-    });
-
-    final service = FlutterBackgroundService();
-    bool isRunning = await service.isRunning();
-    
-    if (!isRunning) {
-      await service.startService();
-    }
-
-    service.invoke('startTimer', {
-      'duration': _secondsRemaining,
-      'intervalSeconds': _intervalSeconds,
-      'sound': _selectedSound,
-      'alertMode': _alertMode,
-    });
+    final timerProvider = Provider.of<TimerProvider>(context, listen: false);
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    timerProvider.startTimer(
+      timerProvider.secondsRemaining,
+      _intervalSeconds,
+      settings.selectedSound,
+      settings.alertMode,
+      patientName: _nameController.text.isNotEmpty ? _nameController.text : 'General',
+      alarmDuration: settings.alarmDuration,
+    );
   }
 
   Future<void> _saveVitalsAndStart() async {
     if (_formKey.currentState!.validate()) {
+      final timerProvider = Provider.of<TimerProvider>(context, listen: false);
+      
       // Create and save Patient
       final patientId = DateTime.now().millisecondsSinceEpoch.toString();
       final patient = PatientModel(
@@ -113,46 +124,41 @@ class _TimerScreenState extends State<TimerScreen> {
         age: int.tryParse(_ageController.text) ?? 0,
         weight: double.tryParse(_weightController.text) ?? 0.0,
       );
-      await DatabaseHelper().insertPatient(patient);
+      
+      final clinicalService = Provider.of<ClinicalService>(context, listen: false);
+      await clinicalService.addPatient(patient);
 
       // Create and save Vitals
-      final vitalsId = DateTime.now().millisecondsSinceEpoch.toString() + "_vt";
+      final vitalsId = "${DateTime.now().millisecondsSinceEpoch}_vt";
       final vitals = VitalsRecord(
         id: vitalsId,
         patientId: patientId,
         spo2: double.tryParse(_spo2Controller.text) ?? 0.0,
         bp: _bpController.text,
         recordedAt: DateTime.now(),
-        notes: "Started Timer for ${_formatTime(_initialDuration)} with ${_intervalSeconds}s interval",
+        notes: "Started Timer for ${_formatTime(timerProvider.initialDuration)} with ${_intervalSeconds}s interval",
       );
-      await DatabaseHelper().insertVitals(vitals);
+      await clinicalService.logVitals(vitals);
 
+      if (!mounted) return;
       Navigator.pop(context); // Close form
       _resumeTimer(); // Start timer
     }
   }
 
   void _stopTimer() {
-    FlutterBackgroundService().invoke('stopService');
-    setState(() {
-      _isRunning = false;
-    });
+    Provider.of<TimerProvider>(context, listen: false).stopTimer();
   }
 
   void _resetTimer() {
-    _stopTimer();
+    Provider.of<TimerProvider>(context, listen: false).resetTimer();
     _audioPlayer.stop();
-    setState(() {
-      _secondsRemaining = _initialDuration;
-    });
   }
 
   void _setDuration(Duration duration) {
-    if (_isRunning) _stopTimer();
-    setState(() {
-      _initialDuration = duration.inSeconds;
-      _secondsRemaining = _initialDuration;
-    });
+    final timerProvider = Provider.of<TimerProvider>(context, listen: false);
+    if (timerProvider.isRunning) _stopTimer();
+    timerProvider.setDuration(duration.inSeconds);
     Vibration.vibrate(duration: 50, amplitude: 64);
   }
 
@@ -180,7 +186,11 @@ class _TimerScreenState extends State<TimerScreen> {
   }
 
   void _triggerAlert({bool isCompletion = false}) async {
-    if (_alertMode == 'Vibration' || _alertMode == 'Both') {
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    final alertMode = settings.alertMode;
+    final selectedSound = settings.selectedSound;
+
+    if (alertMode == 'Vibration' || alertMode == 'Both') {
       if (isCompletion) {
         // Powerful haptic sequence
         for (int i = 0; i < 3; i++) {
@@ -192,13 +202,13 @@ class _TimerScreenState extends State<TimerScreen> {
       }
     }
 
-    if (_alertMode == 'Sound' || _alertMode == 'Both') {
+    if (alertMode == 'Sound' || alertMode == 'Both') {
       await _audioPlayer.stop();
-      if (_selectedSound.startsWith('/')) {
-        await _audioPlayer.play(DeviceFileSource(_selectedSound));
+      if (selectedSound.startsWith('/')) {
+        await _audioPlayer.play(DeviceFileSource(selectedSound));
       } else {
         String assetPath;
-        switch (_selectedSound) {
+        switch (selectedSound) {
           case 'Emergency Pulse':
             assetPath = 'sounds/emergency_pulse.ogg';
             break;
@@ -223,16 +233,19 @@ class _TimerScreenState extends State<TimerScreen> {
   }
 
   Future<void> _pickCustomRingtone() async {
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.audio,
     );
 
     if (result != null && result.files.single.path != null) {
+      final customPath = result.files.single.path!;
+      await settings.setSelectedSound(customPath);
+
       setState(() {
-        _selectedSound = result.files.single.path!;
         // Add to the top of the list if not there
-        if (!_medicalSounds.contains(_selectedSound)) {
-          _medicalSounds.insert(0, _selectedSound);
+        if (!_medicalSounds.contains(customPath)) {
+          _medicalSounds.insert(0, customPath);
         }
       });
       _previewAlert();
@@ -253,24 +266,26 @@ class _TimerScreenState extends State<TimerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isGlass = Provider.of<ThemeProvider>(context).themeMode == ThemeModeType.liquidGlass;
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isDark = themeProvider.themeMode == ThemeModeType.dark;
+    final timerProvider = Provider.of<TimerProvider>(context);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20.0),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _buildTimerDisplay(isGlass),
+          _buildTimerDisplay(isDark, timerProvider),
           const SizedBox(height: 32),
-          _buildCustomSelectors(isGlass),
+          _buildCustomSelectors(isDark, timerProvider),
           const SizedBox(height: 32),
-          _buildControls(isGlass),
+          _buildControls(isDark, timerProvider),
         ],
       ),
     );
   }
 
-  Widget _buildTimerDisplay(bool isGlass) {
+  Widget _buildTimerDisplay(bool isDark, TimerProvider timerProvider) {
     return Center(
       child: GlassContainer(
         borderRadius: 150,
@@ -278,11 +293,11 @@ class _TimerScreenState extends State<TimerScreen> {
         child: Column(
           children: [
             Text(
-              _formatTime(_secondsRemaining),
+              _formatTime(timerProvider.secondsRemaining),
               style: GoogleFonts.outfit(
                 fontSize: 64,
                 fontWeight: FontWeight.w300,
-                color: isGlass ? const Color(0xFF1E293B) : Colors.black,
+                color: isDark ? Colors.white : Colors.black,
               ),
             ),
             Text(
@@ -290,7 +305,7 @@ class _TimerScreenState extends State<TimerScreen> {
               style: TextStyle(
                 fontSize: 12,
                 letterSpacing: 4,
-                color: isGlass ? const Color(0xFF64748B) : Colors.black38,
+                color: isDark ? Colors.white38 : Colors.black38,
               ),
             ),
           ],
@@ -299,7 +314,7 @@ class _TimerScreenState extends State<TimerScreen> {
     );
   }
 
-  Widget _buildCustomSelectors(bool isGlass) {
+  Widget _buildCustomSelectors(bool isDark, TimerProvider timerProvider) {
     return Column(
       children: [
         Row(
@@ -307,17 +322,17 @@ class _TimerScreenState extends State<TimerScreen> {
           children: [
             _buildSelectorButton(
               context, 
-              isGlass, 
+              isDark,
               title: 'Duration', 
-              value: _initialDuration == 0 ? 'Set Time' : _formatTime(_initialDuration),
-              onTap: () => _showDurationPicker(context, isGlass),
+              value: timerProvider.initialDuration == 0 ? 'Set Time' : _formatTime(timerProvider.initialDuration),
+              onTap: () => _showDurationPicker(context, isDark, timerProvider),
             ),
             _buildSelectorButton(
               context, 
-              isGlass, 
+              isDark,
               title: 'Intervals', 
               value: _intervalSeconds == 0 ? 'None' : '${_intervalSeconds ~/ 60}m ${_intervalSeconds % 60}s',
-              onTap: () => _showIntervalPicker(context, isGlass),
+              onTap: () => _showIntervalPicker(context, isDark),
             ),
           ],
         ),
@@ -326,7 +341,8 @@ class _TimerScreenState extends State<TimerScreen> {
   }
 
   void _showVitalsForm() {
-    final isGlass = Provider.of<ThemeProvider>(context, listen: false).themeMode == ThemeModeType.liquidGlass;
+    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    final isDark = themeProvider.themeMode == ThemeModeType.dark;
     
     showDialog(
       context: context,
@@ -345,15 +361,15 @@ class _TimerScreenState extends State<TimerScreen> {
                   Text('Patient Vitals', style: TextStyle(
                     fontSize: 24, 
                     fontWeight: FontWeight.bold,
-                    color: isGlass ? const Color(0xFF1E293B) : Colors.black
+                    color: isDark ? Colors.white : Colors.black
                   )),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _nameController,
-                    style: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black),
+                    style: TextStyle(color: isDark ? Colors.white : Colors.black),
                     decoration: InputDecoration(
                       labelText: 'Patient Name',
-                      labelStyle: TextStyle(color: isGlass ? Colors.white70 : Colors.black54),
+                      labelStyle: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
                     ),
                     validator: (v) => v!.isEmpty ? 'Required' : null,
                   ),
@@ -363,10 +379,10 @@ class _TimerScreenState extends State<TimerScreen> {
                         child: TextFormField(
                           controller: _ageController,
                           keyboardType: TextInputType.number,
-                          style: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black),
+                          style: TextStyle(color: isDark ? Colors.white : Colors.black),
                           decoration: InputDecoration(
                             labelText: 'Age',
-                            labelStyle: TextStyle(color: isGlass ? Colors.white70 : Colors.black54),
+                            labelStyle: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
                           ),
                         ),
                       ),
@@ -375,10 +391,10 @@ class _TimerScreenState extends State<TimerScreen> {
                         child: TextFormField(
                           controller: _weightController,
                           keyboardType: TextInputType.number,
-                          style: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black),
+                          style: TextStyle(color: isDark ? Colors.white : Colors.black),
                           decoration: InputDecoration(
                             labelText: 'Weight (kg)',
-                            labelStyle: TextStyle(color: isGlass ? Colors.white70 : Colors.black54),
+                            labelStyle: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
                           ),
                         ),
                       ),
@@ -390,10 +406,10 @@ class _TimerScreenState extends State<TimerScreen> {
                         child: TextFormField(
                           controller: _spo2Controller,
                           keyboardType: TextInputType.number,
-                          style: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black),
+                          style: TextStyle(color: isDark ? Colors.white : Colors.black),
                           decoration: InputDecoration(
                             labelText: 'SPO2 (%)',
-                            labelStyle: TextStyle(color: isGlass ? Colors.white70 : Colors.black54),
+                            labelStyle: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
                           ),
                         ),
                       ),
@@ -401,10 +417,10 @@ class _TimerScreenState extends State<TimerScreen> {
                       Expanded(
                         child: TextFormField(
                           controller: _bpController,
-                          style: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black),
+                          style: TextStyle(color: isDark ? Colors.white : Colors.black),
                           decoration: InputDecoration(
                             labelText: 'BP (e.g. 120/80)',
-                            labelStyle: TextStyle(color: isGlass ? Colors.white70 : Colors.black54),
+                            labelStyle: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
                           ),
                         ),
                       ),
@@ -416,12 +432,13 @@ class _TimerScreenState extends State<TimerScreen> {
                     children: [
                       TextButton(
                         onPressed: () => Navigator.pop(context),
-                        child: Text('Cancel', style: TextStyle(color: isGlass ? const Color(0xFF64748B) : Colors.black54)),
+                        child: Text('Cancel', style: TextStyle(color: isDark ? Colors.white60 : Colors.black54)),
                       ),
                       ElevatedButton(
                         onPressed: _saveVitalsAndStart,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: isGlass ? const Color(0xFF3B82F6) : Colors.black,
+                          backgroundColor: isDark ? const Color(0xFF3B82F6) : Colors.black,
+                          foregroundColor: Colors.white,
                         ),
                         child: const Text('Start Timer'),
                       ),
@@ -436,7 +453,7 @@ class _TimerScreenState extends State<TimerScreen> {
     );
   }
 
-  Widget _buildSelectorButton(BuildContext context, bool isGlass, {required String title, required String value, required VoidCallback onTap}) {
+  Widget _buildSelectorButton(BuildContext context, bool isDark, {required String title, required String value, required VoidCallback onTap}) {
     return GestureDetector(
       onTap: onTap,
       child: GlassContainer(
@@ -448,7 +465,7 @@ class _TimerScreenState extends State<TimerScreen> {
               title,
               style: TextStyle(
                 fontSize: 12,
-                color: isGlass ? const Color(0xFF64748B) : Colors.black54,
+                color: isDark ? Colors.white38 : Colors.black54,
               ),
             ),
             const SizedBox(height: 8),
@@ -457,7 +474,7 @@ class _TimerScreenState extends State<TimerScreen> {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: isGlass ? const Color(0xFF1E293B) : Colors.black,
+                color: isDark ? Colors.white : Colors.black,
               ),
             ),
           ],
@@ -466,7 +483,7 @@ class _TimerScreenState extends State<TimerScreen> {
     );
   }
 
-  void _showDurationPicker(BuildContext context, bool isGlass) {
+  void _showDurationPicker(BuildContext context, bool isDark, TimerProvider timerProvider) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -477,18 +494,18 @@ class _TimerScreenState extends State<TimerScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Set Timer Duration', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Text('Set Timer Duration', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
               SizedBox(
                 height: 200,
                 child: CupertinoTheme(
                   data: CupertinoThemeData(
                     textTheme: CupertinoTextThemeData(
-                      pickerTextStyle: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black, fontSize: 24),
+                      pickerTextStyle: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 24),
                     ),
                   ),
                   child: CupertinoTimerPicker(
                     mode: CupertinoTimerPickerMode.hm,
-                    initialTimerDuration: Duration(seconds: _initialDuration),
+                    initialTimerDuration: Duration(seconds: timerProvider.initialDuration),
                     onTimerDurationChanged: (Duration newDuration) {
                       _setDuration(newDuration);
                     },
@@ -497,6 +514,10 @@ class _TimerScreenState extends State<TimerScreen> {
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isDark ? const Color(0xFF3B82F6) : Colors.black,
+                  foregroundColor: Colors.white,
+                ),
                 child: const Text('Done'),
               )
             ],
@@ -506,7 +527,7 @@ class _TimerScreenState extends State<TimerScreen> {
     );
   }
 
-  void _showIntervalPicker(BuildContext context, bool isGlass) {
+  void _showIntervalPicker(BuildContext context, bool isDark) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -517,13 +538,13 @@ class _TimerScreenState extends State<TimerScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Set Alerts Interval', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Text('Set Alerts Interval', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
               SizedBox(
                 height: 200,
                 child: CupertinoTheme(
                   data: CupertinoThemeData(
                     textTheme: CupertinoTextThemeData(
-                      pickerTextStyle: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black, fontSize: 24),
+                      pickerTextStyle: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 24),
                     ),
                   ),
                   child: CupertinoTimerPicker(
@@ -540,6 +561,10 @@ class _TimerScreenState extends State<TimerScreen> {
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isDark ? const Color(0xFF3B82F6) : Colors.black,
+                  foregroundColor: Colors.white,
+                ),
                 child: const Text('Done'),
               )
             ],
@@ -549,33 +574,46 @@ class _TimerScreenState extends State<TimerScreen> {
     );
   }
 
-  Widget _buildControls(bool isGlass) {
+  Widget _buildControls(bool isDark, TimerProvider timerProvider) {
+    final isRunningOrPaused = timerProvider.isRunning || timerProvider.isPaused;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         IconButton(
-          onPressed: _resetTimer,
-          icon: Icon(Icons.refresh, size: 32, color: isGlass ? const Color(0xFF64748B) : Colors.black38),
+          onPressed: isRunningOrPaused ? _stopTimer : _resetTimer,
+          icon: Icon(
+            isRunningOrPaused ? Icons.stop : Icons.refresh,
+            size: 32,
+            color: isDark ? Colors.white60 : Colors.black38,
+          ),
         ),
         const SizedBox(width: 32),
         GestureDetector(
-          onTap: _isRunning ? _stopTimer : _startTimer,
+          onTap: () {
+            if (timerProvider.isRunning) {
+              timerProvider.pauseTimer();
+            } else if (timerProvider.isPaused) {
+              timerProvider.resumeTimer();
+            } else {
+              _startTimer();
+            }
+          },
           child: Container(
             width: 80,
             height: 80,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: isGlass ? const Color(0xFF3B82F6) : Colors.black,
+              color: isDark ? const Color(0xFF3B82F6) : Colors.black,
               boxShadow: [
                 BoxShadow(
-                  color: (isGlass ? const Color(0xFF3B82F6) : Colors.black).withAlpha(77), // 0.3 * 255 = 76.5 -> 77
+                  color: (isDark ? const Color(0xFF3B82F6) : Colors.black).withAlpha(77),
                   blurRadius: 20,
                   offset: const Offset(0, 10),
                 ),
               ],
             ),
             child: Icon(
-              _isRunning ? Icons.pause : Icons.play_arrow,
+              timerProvider.isRunning ? Icons.pause : Icons.play_arrow,
               color: Colors.white,
               size: 40,
             ),
@@ -583,65 +621,84 @@ class _TimerScreenState extends State<TimerScreen> {
         ),
         const SizedBox(width: 32),
         IconButton(
-          onPressed: () => _showSoundPicker(context, isGlass),
-          icon: Icon(Icons.music_note, size: 32, color: isGlass ? const Color(0xFF64748B) : Colors.black38),
+          onPressed: () => _showSoundPicker(context, isDark),
+          icon: Icon(Icons.music_note, size: 32, color: isDark ? Colors.white60 : Colors.black38),
         ),
       ],
     );
   }
 
-  void _showSoundPicker(BuildContext context, bool isGlass) {
+  void _showSoundPicker(BuildContext context, bool isDark) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => GlassContainer(
-        borderRadius: 30,
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Alert Settings', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            // Mode Selector
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: ['Sound', 'Vibration', 'Both'].map((mode) => ChoiceChip(
-                label: Text(mode, style: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black)),
-                selected: _alertMode == mode,
-                selectedColor: isGlass ? const Color(0xFF3B82F6).withAlpha(128) : Colors.black26,
-                backgroundColor: Colors.transparent,
-                onSelected: (selected) {
-                  if (selected) {
-                    setState(() => _alertMode = mode);
-                    _previewAlert();
-                  }
-                },
-              )).toList(),
-            ),
-            const Divider(),
-            ListTile(
-              leading: Icon(Icons.upload_file, color: isGlass ? const Color(0xFF3B82F6) : Colors.black),
-              title: Text('Import Custom Ringtone', style: TextStyle(color: isGlass ? const Color(0xFF3B82F6) : Colors.black, fontWeight: FontWeight.bold)),
-              onTap: () {
-                Navigator.pop(context);
-                _pickCustomRingtone();
-              },
-            ),
-            const Divider(),
-            ..._medicalSounds.map((sound) => ListTile(
-              title: Text(
-                sound.startsWith('/') ? sound.split('/').last : sound, 
-                style: TextStyle(color: isGlass ? const Color(0xFF1E293B) : Colors.black)
+      builder: (context) => Consumer<SettingsProvider>(
+        builder: (context, settings, child) => GlassContainer(
+          borderRadius: 30,
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Alert Settings', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+              const SizedBox(height: 16),
+              // Mode Selector
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: ['Sound', 'Vibration', 'Both'].map((mode) => ChoiceChip(
+                  label: Text(mode, style: TextStyle(color: isDark ? Colors.white : Colors.black)),
+                  selected: settings.alertMode == mode,
+                  selectedColor: isDark ? const Color(0xFF3B82F6).withAlpha(128) : Colors.black26,
+                  backgroundColor: Colors.transparent,
+                  onSelected: (selected) async {
+                    if (selected) {
+                      await settings.setAlertMode(mode);
+                      _previewAlert();
+                    }
+                  },
+                )).toList(),
               ),
-              trailing: _selectedSound == sound 
-                  ? Icon(Icons.check_circle, color: isGlass ? const Color(0xFF3B82F6) : Colors.black) 
-                  : null,
-              onTap: () {
-                setState(() => _selectedSound = sound);
-                _previewAlert();
-              },
-            )),
-          ],
+              const Divider(),
+              Text('Alarm Repetition', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.black87)),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: ['Once', '5s', '15s', '30s', 'Continuous'].map((duration) => ChoiceChip(
+                  label: Text(duration, style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 12)),
+                  selected: settings.alarmDuration == duration,
+                  selectedColor: isDark ? const Color(0xFF3B82F6).withAlpha(128) : Colors.black26,
+                  backgroundColor: Colors.transparent,
+                  onSelected: (selected) {
+                    if (selected) {
+                      settings.setAlarmDuration(duration);
+                    }
+                  },
+                )).toList(),
+              ),
+              const Divider(),
+              ListTile(
+                leading: Icon(Icons.upload_file, color: isDark ? const Color(0xFF60A5FA) : Colors.black),
+                title: Text('Import Custom Ringtone', style: TextStyle(color: isDark ? const Color(0xFF60A5FA) : Colors.black, fontWeight: FontWeight.bold)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickCustomRingtone();
+                },
+              ),
+              const Divider(),
+              ..._medicalSounds.map((sound) => ListTile(
+                title: Text(
+                  sound.startsWith('/') ? sound.split('/').last : sound, 
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black)
+                ),
+                trailing: settings.selectedSound == sound 
+                    ? Icon(Icons.check_circle, color: isDark ? const Color(0xFF60A5FA) : Colors.black) 
+                    : null,
+                onTap: () async {
+                  await settings.setSelectedSound(sound);
+                  _previewAlert();
+                },
+              )),
+            ],
+          ),
         ),
       ),
     );

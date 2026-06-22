@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/app_themes.dart';
@@ -16,24 +15,25 @@ class GlassContainer extends StatelessWidget {
     this.borderRadius = 24,
     this.blur = 25,
     this.padding,
-    this.opacity = 0.4, // Increased for light mode
+    this.opacity = 0.4,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isGlass = Provider.of<ThemeProvider>(context).themeMode == ThemeModeType.liquidGlass;
+    final themeMode = Provider.of<ThemeProvider>(context).themeMode;
+    final isDark = themeMode == ThemeModeType.dark;
 
-    if (!isGlass) {
+    if (isDark) {
       return Container(
         padding: padding,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: const Color(0xFF131B2E), // Deep navy sapphire card surface
           borderRadius: BorderRadius.circular(borderRadius),
-          border: Border.all(color: Colors.black.withAlpha(13)), // 0.05 * 255 approx 13
+          border: Border.all(color: Colors.white.withAlpha(18)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withAlpha(5), // 0.02 * 255 approx 5
-              blurRadius: 10,
+              color: Colors.black.withAlpha(50),
+              blurRadius: 12,
               offset: const Offset(0, 4),
             ),
           ],
@@ -42,28 +42,21 @@ class GlassContainer extends StatelessWidget {
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: Colors.white.withAlpha((opacity * 255).toInt()),
-            borderRadius: BorderRadius.circular(borderRadius),
-            border: Border.all(color: Colors.white.withAlpha(153)), // 0.6 * 255 = 153 for crisp light borders
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF3B82F6).withAlpha(15), // Blue tint soft shadow
-                blurRadius: 30,
-                spreadRadius: -5,
-                offset: const Offset(0, 10),
-              )
-            ],
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(borderRadius),
+        border: Border.all(color: Colors.black.withAlpha(13)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(5),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
-          child: child,
-        ),
+        ],
       ),
+      child: child,
     );
   }
 }

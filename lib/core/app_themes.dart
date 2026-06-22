@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AppThemes {
-  // Minimalistic Mode
+  // Minimalistic Mode (Light)
   static ThemeData get minimalisticTheme {
     return ThemeData(
       useMaterial3: true,
@@ -27,55 +28,94 @@ class AppThemes {
     );
   }
 
-  // Liquid Glass Mode
-  static ThemeData get liquidGlassTheme {
+  // Android 17 Sapphire Dark Mode
+  static ThemeData get darkTheme {
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.light,
-      scaffoldBackgroundColor: Colors.transparent,
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: const Color(0xFF090D16), // Ultra deep sapphire black
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF3B82F6),
-        brightness: Brightness.light,
-        primary: const Color(0xFF3B82F6), // Soft blue
-        secondary: const Color(0xFF818CF8), // Indigo
-        surface: Colors.white.withAlpha(102), // 0.4 white glass
+        brightness: Brightness.dark,
+        primary: const Color(0xFF3B82F6), // Sapphire blue
+        secondary: const Color(0xFF818CF8), // Indigo glow
+        surface: const Color(0xFF131B2E), // Deep navy card surface
+        onPrimary: Colors.white,
       ),
-      textTheme: GoogleFonts.interTextTheme(ThemeData.light().textTheme).copyWith(
-        displayLarge: GoogleFonts.inter(fontWeight: FontWeight.w700, color: const Color(0xFF1E293B)),
-        titleLarge: GoogleFonts.inter(fontWeight: FontWeight.w600, color: const Color(0xFF1E293B)),
-        bodyLarge: GoogleFonts.inter(fontWeight: FontWeight.normal, color: const Color(0xFF1E293B)),
-        bodyMedium: GoogleFonts.inter(fontWeight: FontWeight.normal, color: const Color(0xFF64748B)),
+      textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme).copyWith(
+        displayLarge: GoogleFonts.inter(fontWeight: FontWeight.w700, color: Colors.white),
+        titleLarge: GoogleFonts.inter(fontWeight: FontWeight.w600, color: Colors.white),
+        bodyLarge: GoogleFonts.inter(fontWeight: FontWeight.normal, color: Colors.white70),
+        bodyMedium: GoogleFonts.inter(fontWeight: FontWeight.normal, color: Colors.white60),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
-        titleTextStyle: TextStyle(color: Color(0xFF1E293B), fontSize: 24, fontWeight: FontWeight.bold),
+        titleTextStyle: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
       ),
     );
   }
 }
 
-enum ThemeModeType { minimalistic, liquidGlass }
+enum ThemeModeType { minimalistic, dark }
 
 class ThemeProvider with ChangeNotifier {
-  ThemeModeType _themeMode = ThemeModeType.minimalistic;
+  ThemeModeType _themeMode;
 
   ThemeModeType get themeMode => _themeMode;
 
-  ThemeData get currentTheme => _themeMode == ThemeModeType.minimalistic 
-      ? AppThemes.minimalisticTheme 
-      : AppThemes.liquidGlassTheme;
+  ThemeProvider({SharedPreferences? prefs}) : _themeMode = ThemeModeType.minimalistic {
+    if (prefs != null) {
+      final index = prefs.getInt('theme_mode');
+      if (index != null && index < ThemeModeType.values.length) {
+        _themeMode = ThemeModeType.values[index];
+      }
+    } else {
+      _loadTheme();
+    }
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final index = prefs.getInt('theme_mode');
+    if (index != null && index < ThemeModeType.values.length) {
+      final loadedMode = ThemeModeType.values[index];
+      if (_themeMode != loadedMode) {
+        _themeMode = loadedMode;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _saveTheme(ThemeModeType mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('theme_mode', mode.index);
+  }
+
+  ThemeData get currentTheme {
+    switch (_themeMode) {
+      case ThemeModeType.dark:
+        return AppThemes.darkTheme;
+      case ThemeModeType.minimalistic:
+        return AppThemes.minimalisticTheme;
+    }
+  }
 
   void toggleTheme() {
-    _themeMode = _themeMode == ThemeModeType.minimalistic 
-        ? ThemeModeType.liquidGlass 
-        : ThemeModeType.minimalistic;
+    // Header button directly toggles between Light (Minimalistic) and Dark (Sapphire)
+    if (_themeMode == ThemeModeType.dark) {
+      _themeMode = ThemeModeType.minimalistic;
+    } else {
+      _themeMode = ThemeModeType.dark;
+    }
+    _saveTheme(_themeMode);
     notifyListeners();
   }
 
   void setTheme(ThemeModeType mode) {
     _themeMode = mode;
+    _saveTheme(mode);
     notifyListeners();
   }
 }

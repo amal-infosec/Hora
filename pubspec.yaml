@@ -45,7 +45,7 @@ dependencies:
   
   # Audio & Haptics
   audioplayers: ^5.2.1
-  vibration: ^1.9.0
+  vibration: ^3.0.0
   
   # Utilities
   uuid: ^4.3.3
@@ -58,18 +58,21 @@ dependencies:
   system_alert_window: ^2.0.7
   file_picker: ^10.3.10
   android_alarm_manager_plus: ^5.0.0
+  url_launcher: ^6.2.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
   flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
 
   assets:
     - assets/sounds/
+    - assets/images/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

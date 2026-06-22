@@ -18,6 +18,11 @@ class ClinicalService with ChangeNotifier {
     await loadPatients();
   }
 
+  Future<void> deletePatient(String id) async {
+    await _dbHelper.deletePatient(id);
+    await loadPatients();
+  }
+
   Future<void> logVitals(VitalsRecord vitals) async {
     await _dbHelper.insertVitals(vitals);
     notifyListeners();
@@ -25,5 +30,10 @@ class ClinicalService with ChangeNotifier {
 
   Future<List<VitalsRecord>> getPatientVitals(String patientId) async {
     return await _dbHelper.getVitals(patientId);
+  }
+
+  Future<void> deleteVitals(String id) async {
+    await _dbHelper.deleteVitals(id);
+    notifyListeners();
   }
 }

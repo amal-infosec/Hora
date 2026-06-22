@@ -25,45 +25,46 @@ class _TaskListScreenState extends State<TaskListScreen> {
   Widget build(BuildContext context) {
     final taskService = Provider.of<TaskService>(context);
     final themeProvider = Provider.of<ThemeProvider>(context);
-    final isGlass = themeProvider.themeMode == ThemeModeType.liquidGlass;
+    final isDark = themeProvider.themeMode == ThemeModeType.dark;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: taskService.tasks.isEmpty
-          ? _buildEmptyState(isGlass)
+          ? _buildEmptyState(isDark)
           : ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
               itemCount: taskService.tasks.length,
               itemBuilder: (context, index) {
                 final task = taskService.tasks[index];
-                return _buildTaskItem(task, isGlass);
+                return _buildTaskItem(task, isDark);
               },
             ),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'fab_tasks_screen',
         onPressed: () => _showAddTaskDialog(context),
-        backgroundColor: isGlass ? const Color(0xFF3B82F6) : Colors.black,
+        backgroundColor: isDark ? const Color(0xFF3B82F6) : Colors.black,
         child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
 
-  Widget _buildEmptyState(bool isGlass) {
+  Widget _buildEmptyState(bool isDark) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.assignment_outlined, size: 64, color: isGlass ? const Color(0xFFCBD5E1) : Colors.black12),
+          Icon(Icons.assignment_outlined, size: 64, color: isDark ? Colors.white24 : Colors.black12),
           const SizedBox(height: 16),
           Text(
             'No tasks scheduled',
-            style: TextStyle(color: isGlass ? const Color(0xFF64748B) : Colors.black38),
+            style: TextStyle(color: isDark ? Colors.white38 : Colors.black38),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTaskItem(TaskModel task, bool isGlass) {
+  Widget _buildTaskItem(TaskModel task, bool isDark) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0),
       child: GlassContainer(
@@ -75,7 +76,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
               onChanged: (_) {
                 Provider.of<TaskService>(context, listen: false).toggleTaskCompletion(task);
               },
-              activeColor: isGlass ? const Color(0xFF3B82F6) : Colors.black,
+              activeColor: isDark ? const Color(0xFF3B82F6) : Colors.black,
+              checkColor: Colors.white,
             ),
             Expanded(
               child: Column(
@@ -87,24 +89,24 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
                       decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-                      color: isGlass ? const Color(0xFF1E293B) : Colors.black,
+                      color: isDark ? (task.isCompleted ? Colors.white38 : Colors.white) : Colors.black,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Icon(Icons.timer_outlined, size: 14, color: isGlass ? const Color(0xFF64748B) : Colors.black54),
+                      Icon(Icons.timer_outlined, size: 14, color: isDark ? Colors.white38 : Colors.black54),
                       const SizedBox(width: 4),
                       Text(
                         '${task.durationMinutes} min',
-                        style: TextStyle(fontSize: 12, color: isGlass ? const Color(0xFF64748B) : Colors.black54),
+                        style: TextStyle(fontSize: 12, color: isDark ? Colors.white60 : Colors.black54),
                       ),
                       const SizedBox(width: 12),
                       if (task.type == TaskType.temporary)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: Colors.orange.withAlpha(51), // 0.2 * 255 = 51
+                            color: Colors.orange.withAlpha(51),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: const Text('TEMPORARY', style: TextStyle(fontSize: 8, color: Colors.orange)),
@@ -115,7 +117,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ),
             ),
             IconButton(
-              icon: Icon(Icons.delete_outline, color: Colors.red.withAlpha(128)), // 0.5 * 255 = 127.5 -> 128
+              icon: Icon(Icons.delete_outline, color: Colors.red.withAlpha(128)),
               onPressed: () {
                 Provider.of<TaskService>(context, listen: false).deleteTask(task.id);
               },
