@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:system_alert_window/system_alert_window.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 import '../../core/settings_provider.dart';
 import '../../widgets/glass_container.dart';
 import '../../core/app_themes.dart';
@@ -23,6 +24,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _nameController = TextEditingController();
   bool _isEditingName = false;
   bool _isCheckingUpdates = false;
+  bool _isDownloadingUpdate = false;
+  double _downloadProgress = 0.0;
   String _updateStatus = '';
   final String _localVersion = '1.0.1+2'; // Matches pubspec.yaml version
 
@@ -117,6 +120,102 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       setState(() {
         _isCheckingUpdates = false;
+      });
+    }
+  }
+
+  Future<void> _downloadAndInstallUpdate() async {
+    setState(() {
+      _isDownloadingUpdate = true;
+      _downloadProgress = 0.0;
+      _updateStatus = 'Downloading update...';
+    });
+
+    try {
+      const apkUrl = 'https://github.com/amal-infosec/Hora/releases/latest/download/app-release.apk';
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 15);
+      
+      var currentUrl = apkUrl;
+      var redirectCount = 0;
+      HttpClientResponse? response;
+      
+      while (redirectCount < 5) {
+        final request = await client.getUrl(Uri.parse(currentUrl));
+        request.followRedirects = false;
+        response = await request.close();
+        
+        if (response.statusCode == 301 || 
+            response.statusCode == 302 || 
+            response.statusCode == 303 || 
+            response.statusCode == 307 || 
+            response.statusCode == 308) {
+          final location = response.headers.value('location');
+          if (location != null) {
+            currentUrl = location;
+            redirectCount++;
+            continue;
+          }
+        }
+        break;
+      }
+
+      if (response != null && response.statusCode == 200) {
+        final totalLength = response.contentLength;
+        int downloadedLength = 0;
+
+        final tempDir = await getTemporaryDirectory();
+        final apkFile = File('${tempDir.path}/update.apk');
+        if (apkFile.existsSync()) {
+          await apkFile.delete();
+        }
+
+        final fileSink = apkFile.openWrite();
+        
+        await for (var chunk in response) {
+          fileSink.add(chunk);
+          downloadedLength += chunk.length;
+          if (totalLength > 0) {
+            setState(() {
+              _downloadProgress = downloadedLength / totalLength;
+              _updateStatus = 'Downloading update: ${(_downloadProgress * 100).toStringAsFixed(0)}%';
+            });
+          } else {
+            setState(() {
+              _updateStatus = 'Downloading update...';
+            });
+          }
+        }
+        await fileSink.flush();
+        await fileSink.close();
+
+        setState(() {
+          _updateStatus = 'Installing update...';
+        });
+
+        final result = await OpenFilex.open(apkFile.path);
+        if (result.type != ResultType.done) {
+          setState(() {
+            _updateStatus = 'Failed to open installer: ${result.message}\nPlease install manually.';
+          });
+        } else {
+          setState(() {
+            _updateStatus = 'Installer opened. Follow screen prompts to update.';
+          });
+        }
+      } else {
+        final code = response?.statusCode ?? 0;
+        setState(() {
+          _updateStatus = 'Failed to download (Status: $code).';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _updateStatus = 'Download error: $e\nEnsure device has internet connection.';
+      });
+    } finally {
+      setState(() {
+        _isDownloadingUpdate = false;
       });
     }
   }
@@ -504,35 +603,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           color: textColor,
                         ),
                       ),
-                      if (_updateStatus.startsWith('Update available')) ...[
-                        const SizedBox(height: 8),
-                        InkWell(
-                          onTap: () async {
-                            final Uri uri = Uri.parse('https://github.com/amal-infosec/Hora/releases');
-                            try {
-                              await launchUrl(uri, mode: LaunchMode.externalApplication);
-                            } catch (_) {}
-                          },
-                          borderRadius: BorderRadius.circular(4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.download,
-                                size: 16,
-                                color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF3B82F6),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Download from GitHub',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF3B82F6),
-                                  decoration: TextDecoration.underline,
-                                ),
-                              ),
-                            ],
+                      if (_updateStatus.startsWith('Update available') || _isDownloadingUpdate) ...[
+                        const SizedBox(height: 10),
+                        if (_isDownloadingUpdate) ...[
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: _downloadProgress,
+                              backgroundColor: isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05),
+                              valueColor: AlwaysStoppedAnimation<Color>(isDark ? const Color(0xFF60A5FA) : const Color(0xFF3B82F6)),
+                              minHeight: 6,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                        ElevatedButton.icon(
+                          onPressed: _isDownloadingUpdate ? null : _downloadAndInstallUpdate,
+                          icon: _isDownloadingUpdate
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.system_update_alt, size: 18),
+                          label: Text(_isDownloadingUpdate ? 'Downloading...' : 'Download & Install Update'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: isDark ? const Color(0xFF3B82F6) : Colors.black,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ],
