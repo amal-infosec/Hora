@@ -24,7 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isEditingName = false;
   bool _isCheckingUpdates = false;
   String _updateStatus = '';
-  final String _localVersion = '1.0.0+1'; // Matches pubspec.yaml version
+  final String _localVersion = '1.0.1+2'; // Matches pubspec.yaml version
 
   @override
   void initState() {
