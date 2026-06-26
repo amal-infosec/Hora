@@ -187,25 +187,28 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBottomNav() {
-    return Padding(
-      padding: const EdgeInsets.only(
-        left: 20,
-        right: 20,
-        bottom: 10,
-        top: 10,
-      ),
-      child: GlassContainer(
-        borderRadius: 30,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _navItem(0, Icons.home_outlined, 'Home'),
-            _navItem(1, Icons.calendar_today_outlined, 'Schedule'),
-            _buildCenterAddButton(),
-            _navItem(3, Icons.people_outline, 'Patients'),
-            _navItem(4, Icons.settings_outlined, 'Settings'),
-          ],
+    return SafeArea(
+      bottom: true,
+      child: Padding(
+        padding: const EdgeInsets.only(
+          left: 20,
+          right: 20,
+          bottom: 10,
+          top: 10,
+        ),
+        child: GlassContainer(
+          borderRadius: 30,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _navItem(0, Icons.home_outlined, 'Home'),
+              _navItem(1, Icons.calendar_today_outlined, 'Schedule'),
+              _buildCenterAddButton(),
+              _navItem(3, Icons.people_outline, 'Patients'),
+              _navItem(4, Icons.settings_outlined, 'Settings'),
+            ],
+          ),
         ),
       ),
     );
