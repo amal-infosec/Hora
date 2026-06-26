@@ -27,7 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isDownloadingUpdate = false;
   double _downloadProgress = 0.0;
   String _updateStatus = '';
-  final String _localVersion = '1.0.1+2'; // Matches pubspec.yaml version
+  final String _localVersion = '1.0.2+3'; // Matches pubspec.yaml version
 
   @override
   void initState() {
